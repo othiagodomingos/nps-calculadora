@@ -1,290 +1,374 @@
-// Formatação
-const fmtBRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-const fmtPct = (x) => `${(x * 100).toFixed(2)}%`;
-const fmtNps = (x) => x.toFixed(3);
+// Utilidades
+const BRL = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 2 });
+const PCT = (v) => `${(v * 100).toFixed(2)}%`;
+const clamp = (x, min, max) => Math.max(min, Math.min(max, x));
+const parseNum = (el) => {
+  if (!el) return 0;
+  const s = String(el.value ?? '').replace('.', '').replace(',', '.'); // compatibilidade pt-PT/pt-BR
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+};
 
-// Valores padrão (planilha)
+// Defaults a partir da planilha
 const defaults = {
-  baseModel: 'coorte', // 'coorte' | 'real'
+  meses: 1, // Observação: 1 mês reproduz os totais exibidos na planilha
   recorrentes: {
-    coorte: 15649,
-    total: 310995,
+    baseCoorte: 15649,
+    baseReal: 310995,
     dist: { pro: 0.3844885671, neu: 0.3240627912, det: 0.2914486417 },
-    ticket24m: { pro: 1436.3302237136438, neu: 1397.5618203937136, det: 1411.250585341857 },
-    modelo: 'detToPro',
-    migracaoPct: 0 // fração (0..1)
+    ticket: { pro: 1436.3302237136438, neu: 1397.5618203937136, det: 1411.250585341857 }
   },
   eventuais: {
-    coorte: 25147,
-    total: 1435825,
+    baseCoorte: 25147,
+    baseReal: 1435825,
     dist: { pro: 0.4601442399, neu: 0.3186562915, det: 0.2211994686 },
-    ticket24m: { pro: 602.6167622190142, neu: 583.2046932698017, det: 582.9084984984961 },
-    modelo: 'detToPro',
-    migracaoPct: 0
+    ticket: { pro: 602.6167622190142, neu: 583.2046932698017, det: 582.9084984984961 }
   }
 };
 
-// Utils
-const clamp = (x, min, max) => Math.max(min, Math.min(max, x));
+const state = {
+  meses: defaults.meses,
+  recorrentes: {
+    baseMode: 'coorte',
+    base: defaults.recorrentes.baseCoorte,
+    dist: { ...defaults.recorrentes.dist },
+    ticket: { ...defaults.recorrentes.ticket },
+    modelo: 'detToPro',
+    mig: 0 // em fração (0 a 1)
+  },
+  eventuais: {
+    baseMode: 'coorte',
+    base: defaults.eventuais.baseCoorte,
+    dist: { ...defaults.eventuais.dist },
+    ticket: { ...defaults.eventuais.ticket },
+    modelo: 'detToPro',
+    mig: 0
+  }
+};
 
-function normalizeDist(dist) {
-  const s = dist.pro + dist.neu + dist.det;
-  if (s === 0) return { pro: 1, neu: 0, det: 0 };
-  return { pro: dist.pro / s, neu: dist.neu / s, det: dist.det / s };
-}
-
-function npsFromDist(dist) {
+// Fórmulas
+function nps(dist) {
   return 100 * (dist.pro - dist.det);
 }
 
-function baseUsada(segState, baseModel) {
-  return baseModel === 'coorte' ? segState.coorte : segState.total;
-}
-
-function receita24m(segState, baseModel, dist) {
-  const base = baseUsada(segState, baseModel);
-  const { ticket24m } = segState;
+function receitaMensal(base, dist, ticket) {
   const Np = base * dist.pro;
   const Nn = base * dist.neu;
   const Nd = base * dist.det;
-  return (Np * ticket24m.pro) + (Nn * ticket24m.neu) + (Nd * ticket24m.det);
+  return (Np * ticket.pro) + (Nn * ticket.neu) + (Nd * ticket.det);
+}
+
+function receitaPeriodo(base, dist, ticket, meses) {
+  return receitaMensal(base, dist, ticket) * meses;
 }
 
 function aplicaConversao(dist, modelo, m) {
   const d = { ...dist };
   if (modelo === 'detToPro') {
     const mig = clamp(m, 0, d.det);
-    d.det -= mig;
-    d.pro += mig;
+    d.det -= mig; d.pro += mig;
   } else if (modelo === 'neuToPro') {
     const mig = clamp(m, 0, d.neu);
-    d.neu -= mig;
-    d.pro += mig;
+    d.neu -= mig; d.pro += mig;
   } else if (modelo === 'detToNeu') {
     const mig = clamp(m, 0, d.det);
-    d.det -= mig;
-    d.neu += mig;
+    d.det -= mig; d.neu += mig;
   }
-  return normalizeDist(d);
+  // Normaliza pequenos desvios de ponto flutuante
+  const s = d.pro + d.neu + d.det;
+  if (Math.abs(s - 1) > 1e-10) {
+    d.pro /= s; d.neu /= s; d.det /= s;
+  }
+  return d;
 }
 
-function maxPermitido(dist, modelo) {
+function maxAlteracao(dist, modelo) {
   if (modelo === 'detToPro' || modelo === 'detToNeu') return dist.det;
   if (modelo === 'neuToPro') return dist.neu;
   return 0;
 }
 
-function simulaSegmento(segState, baseModel) {
-  const distAtual = normalizeDist(segState.dist);
-  const modelo = segState.modelo;
-  const m = segState.migracaoPct; // fração (0..1)
-  const distSim = aplicaConversao(distAtual, modelo, m);
-
-  const recAtual = receita24m(segState, baseModel, distAtual);
-  const recSim = receita24m(segState, baseModel, distSim);
-
-  return {
-    distAtual, distSim,
-    npsAtual: npsFromDist(distAtual),
-    npsSim: npsFromDist(distSim),
-    receitaAtual: recAtual,
-    receitaSim: recSim,
-    delta: recSim - recAtual,
-    maxAlteracao: maxPermitido(distAtual, modelo)
-  };
-}
-
-function consolidaTotal(recRes, evRes) {
-  return {
-    receitaAtual: recRes.receitaAtual + evRes.receitaAtual,
-    receitaSim: recRes.receitaSim + evRes.receitaSim,
-    delta: recRes.delta + evRes.delta
-  };
-}
-
-// NPS consolidado ponderando bases e distribuições
-function npsConsolidado(recState, evState, baseModel, usarDistSimulada = false) {
-  const r = simulaSegmento(recState, baseModel);
-  const e = simulaSegmento(evState, baseModel);
-  const baseR = baseUsada(recState, baseModel);
-  const baseE = baseUsada(evState, baseModel);
-  const totalBase = baseR + baseE;
-
-  const dr = usarDistSimulada ? r.distSim : r.distAtual;
-  const de = usarDistSimulada ? e.distSim : e.distAtual;
-
-  const pro = (dr.pro * baseR + de.pro * baseE) / totalBase;
-  const det = (dr.det * baseR + de.det * baseE) / totalBase;
-  return 100 * (pro - det);
-}
-
-// Estado reativo
-const state = JSON.parse(JSON.stringify(defaults));
-
-// DOM refs
+// Ligações de UI
 const $ = (sel) => document.querySelector(sel);
-const bindNumber = (id, getter, setter, onInput) => {
-  const el = $(id);
-  el.value = getter();
-  el.addEventListener('input', () => {
-    setter(el.value);
-    onInput && onInput();
-  });
-  return el;
-};
 
-function init() {
-  // Tabs
+function setDistributionInputs(prefix, dist) {
+  $(`#${prefix}-pro`).value = (dist.pro * 100).toFixed(4);
+  $(`#${prefix}-neu`).value = (dist.neu * 100).toFixed(4);
+  $(`#${prefix}-det`).value = (dist.det * 100).toFixed(4);
+}
+
+function getDistributionFromInputs(prefix) {
+  let pro = parseNum($(`#${prefix}-pro`));
+  let neu = parseNum($(`#${prefix}-neu`));
+  let det = parseNum($(`#${prefix}-det`));
+  if (pro < 0) pro = 0; if (neu < 0) neu = 0; if (det < 0) det = 0;
+
+  // Normaliza para somar 100 mantendo proporções
+  const sum = pro + neu + det;
+  if (sum === 0) {
+    // fallback: deixa tudo zero menos promotores (100) para evitar NaN
+    pro = 100; neu = 0; det = 0;
+  } else {
+    pro = (pro / sum) * 100;
+    neu = (neu / sum) * 100;
+    det = (det / sum) * 100;
+  }
+  return { pro: pro / 100, neu: neu / 100, det: det / 100 };
+}
+
+function setTickets(prefix, tk) {
+  $(`#${prefix}-tk-pro`).value = tk.pro.toFixed(6);
+  $(`#${prefix}-tk-neu`).value = tk.neu.toFixed(6);
+  $(`#${prefix}-tk-det`).value = tk.det.toFixed(6);
+}
+
+function getTickets(prefix) {
+  return {
+    pro: parseNum($(`#${prefix}-tk-pro`)),
+    neu: parseNum($(`#${prefix}-tk-neu`)),
+    det: parseNum($(`#${prefix}-tk-det`))
+  };
+}
+
+function renderBars(prefix, distAtual, distSim) {
+  const barA = $(`#${prefix}-bar-atual`);
+  const barS = $(`#${prefix}-bar-sim`);
+  const seg = (pct, cls) => `<div class="seg-${cls}" style="width:${pct}%;"></div>`;
+
+  const aPro = (distAtual.pro * 100).toFixed(2);
+  const aNeu = (distAtual.neu * 100).toFixed(2);
+  const aDet = (distAtual.det * 100).toFixed(2);
+
+  const sPro = (distSim.pro * 100).toFixed(2);
+  const sNeu = (distSim.neu * 100).toFixed(2);
+  const sDet = (distSim.det * 100).toFixed(2);
+
+  barA.innerHTML = seg(aPro, 'pro') + seg(aNeu, 'neu') + seg(aDet, 'det');
+  barS.innerHTML = seg(sPro, 'pro') + seg(sNeu, 'neu') + seg(sDet, 'det');
+}
+
+function updateMaxPill(prefix, dist, modelo) {
+  const max = maxAlteracao(dist, modelo);
+  const pill = $(`#${prefix}-max-pill`);
+  pill.textContent = `Máx. ${ (max * 100).toFixed(2) }%`;
+  // Atualiza range e number max
+  const range = $(`#${prefix}-mig`);
+  const num = $(`#${prefix}-mig-num`);
+  range.max = (max * 100).toFixed(4);
+  num.max = (max * 100).toFixed(4);
+}
+
+function renderSegment(prefix, segState) {
+  // Base
+  $(`#${prefix}-base`).value = String(segState.base);
+
+  // Dist e Tickets
+  setDistributionInputs(prefix, segState.dist);
+  setTickets(prefix, segState.ticket);
+
+  // Modelo e Migração
+  $(`#${prefix}-modelo`).value = segState.modelo;
+  $(`#${prefix}-mig`).value = (segState.mig * 100).toFixed(4);
+  $(`#${prefix}-mig-num`).value = (segState.mig * 100).toFixed(4);
+
+  // KPIs
+  const distAtual = segState.dist;
+  const distSim = aplicaConversao(segState.dist, segState.modelo, segState.mig);
+  const npsAtual = nps(distAtual);
+  const npsSim = nps(distSim);
+  const receitaA = receitaPeriodo(segState.base, distAtual, segState.ticket, state.meses);
+  const receitaS = receitaPeriodo(segState.base, distSim, segState.ticket, state.meses);
+
+  $(`#${prefix}-nps-atual`).textContent = `${npsAtual.toFixed(3)}`;
+  $(`#${prefix}-nps-sim`).textContent = `${npsSim.toFixed(3)}`;
+  $(`#${prefix}-receita-atual`).textContent = BRL(receitaA);
+  $(`#${prefix}-receita-sim`).textContent = BRL(receitaS);
+  $(`#${prefix}-delta`).textContent = BRL(receitaS - receitaA);
+  $(`#${prefix}-meses-note`).textContent = String(state.meses);
+
+  renderBars(prefix, distAtual, distSim);
+  updateMaxPill(prefix, distAtual, segState.modelo);
+}
+
+function renderTotal() {
+  const rec = state.recorrentes;
+  const evt = state.eventuais;
+
+  const distRecSim = aplicaConversao(rec.dist, rec.modelo, rec.mig);
+  const distEvtSim = aplicaConversao(evt.dist, evt.modelo, evt.mig);
+
+  const recA = receitaPeriodo(rec.base, rec.dist, rec.ticket, state.meses);
+  const recS = receitaPeriodo(rec.base, distRecSim, rec.ticket, state.meses);
+  const evtA = receitaPeriodo(evt.base, evt.dist, evt.ticket, state.meses);
+  const evtS = receitaPeriodo(evt.base, distEvtSim, evt.ticket, state.meses);
+
+  const totA = recA + evtA;
+  const totS = recS + evtS;
+
+  $('#tot-receita-atual').textContent = BRL(totA);
+  $('#tot-receita-sim').textContent = BRL(totS);
+  $('#tot-delta').textContent = BRL(totS - totA);
+  $('#tot-meses-note').textContent = String(state.meses);
+}
+
+function renderAll() {
+  renderSegment('rec', state.recorrentes);
+  renderSegment('evt', state.eventuais);
+  renderTotal();
+}
+
+// Eventos de UI
+function bindTabNav() {
   document.querySelectorAll('.tab').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
-      $('#panel-' + btn.dataset.tab).classList.add('active');
+      const target = btn.getAttribute('data-tab');
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.querySelector(`#panel-${target}`).classList.add('active');
     });
   });
+}
 
-  // BaseModel radios
-  document.querySelectorAll('input[name="baseModel"]').forEach(r => {
+function bindGlobal() {
+  $('#input-meses').addEventListener('input', () => {
+    const m = parseInt($('#input-meses').value, 10);
+    state.meses = isNaN(m) || m < 1 ? 1 : m;
+    renderAll();
+  });
+
+  $('#btn-reset').addEventListener('click', () => {
+    // Reset geral
+    state.meses = defaults.meses;
+    $('#input-meses').value = defaults.meses;
+
+    state.recorrentes = {
+      baseMode: 'coorte',
+      base: defaults.recorrentes.baseCoorte,
+      dist: { ...defaults.recorrentes.dist },
+      ticket: { ...defaults.recorrentes.ticket },
+      modelo: 'detToPro',
+      mig: 0
+    };
+    state.eventuais = {
+      baseMode: 'coorte',
+      base: defaults.eventuais.baseCoorte,
+      dist: { ...defaults.eventuais.dist },
+      ticket: { ...defaults.eventuais.ticket },
+      modelo: 'detToPro',
+      mig: 0
+    };
+
+    document.querySelector('input[name="rec-base-mode"][value="coorte"]').checked = true;
+    document.querySelector('input[name="evt-base-mode"][value="coorte"]').checked = true;
+
+    renderAll();
+  });
+}
+
+function bindSegment(prefix, segKey, defaultsSegment) {
+  // Base Mode radios
+  document.querySelectorAll(`input[name="${prefix}-base-mode"]`).forEach(r => {
     r.addEventListener('change', () => {
-      state.baseModel = r.value === 'coorte' ? 'coorte' : 'real';
+      const mode = r.value;
+      state[segKey].baseMode = mode;
+      if (mode === 'coorte') state[segKey].base = defaultsSegment.baseCoorte;
+      else if (mode === 'real') state[segKey].base = defaultsSegment.baseReal;
+      // se custom, mantém o valor atual e permite editar
       renderAll();
     });
   });
 
-  // Bind Recorrentes inputs
-  bindNumber('#rec-coorte', () => state.recorrentes.coorte, v => state.recorrentes.coorte = +v, renderAll);
-  bindNumber('#rec-total', () => state.recorrentes.total, v => state.recorrentes.total = +v, renderAll);
+  // Base input (para custom)
+  $(`#${prefix}-base`).addEventListener('input', () => {
+    const v = parseInt($(`#${prefix}-base`).value, 10);
+    state[segKey].base = isNaN(v) || v < 0 ? 0 : v;
+    // Se usuário editar manualmente, muda o modo para custom
+    state[segKey].baseMode = 'custom';
+    document.querySelector(`input[name="${prefix}-base-mode"][value="custom"]`).checked = true;
+    renderAll();
+  });
 
-  bindNumber('#rec-pro', () => state.recorrentes.dist.pro * 100, v => state.recorrentes.dist.pro = (+v)/100, renderAll);
-  bindNumber('#rec-neu', () => state.recorrentes.dist.neu * 100, v => state.recorrentes.dist.neu = (+v)/100, renderAll);
-  bindNumber('#rec-det', () => state.recorrentes.dist.det * 100, v => state.recorrentes.dist.det = (+v)/100, renderAll);
+  // Distribuição
+  ['pro', 'neu', 'det'].forEach(k => {
+    $(`#${prefix}-${k}`).addEventListener('input', () => {
+      state[segKey].dist = getDistributionFromInputs(prefix);
+      // Ajusta limites de migração pois dependem do grupo de origem
+      const modelo = state[segKey].modelo;
+      const max = maxAlteracao(state[segKey].dist, modelo);
+      state[segKey].mig = clamp(state[segKey].mig, 0, max);
+      renderAll();
+    });
+  });
 
-  bindNumber('#rec-t-pro', () => state.recorrentes.ticket24m.pro, v => state.recorrentes.ticket24m.pro = +v, renderAll);
-  bindNumber('#rec-t-neu', () => state.recorrentes.ticket24m.neu, v => state.recorrentes.ticket24m.neu = +v, renderAll);
-  bindNumber('#rec-t-det', () => state.recorrentes.ticket24m.det, v => state.recorrentes.ticket24m.det = +v, renderAll);
+  // Tickets
+  ['tk-pro', 'tk-neu', 'tk-det'].forEach(id => {
+    $(`#${prefix}-${id}`).addEventListener('input', () => {
+      state[segKey].ticket = getTickets(prefix);
+      renderAll();
+    });
+  });
 
+  // Modelo
+  $(`#${prefix}-modelo`).addEventListener('change', () => {
+    const modelo = $(`#${prefix}-modelo`).value;
+    state[segKey].modelo = modelo;
+    // Revalida mig máximo
+    const max = maxAlteracao(state[segKey].dist, modelo);
+    state[segKey].mig = clamp(state[segKey].mig, 0, max);
+    renderAll();
+  });
+
+  // Migração (range + number)
+  const syncMig = (pctValue) => {
+    const modelo = state[segKey].modelo;
+    const max = maxAlteracao(state[segKey].dist, modelo) * 100;
+    const v = clamp(pctValue, 0, max);
+    state[segKey].mig = v / 100;
+    $(`#${prefix}-mig`).value = v.toFixed(4);
+    $(`#${prefix}-mig-num`).value = v.toFixed(4);
+    renderAll();
+  };
+
+  $(`#${prefix}-mig`).addEventListener('input', () => {
+    syncMig(parseNum($(`#${prefix}-mig`)));
+  });
+  $(`#${prefix}-mig-num`).addEventListener('input', () => {
+    syncMig(parseNum($(`#${prefix}-mig-num`)));
+  });
+}
+
+// Inicialização
+function init() {
+  // Preencher UI com defaults
+  $('#input-meses').value = state.meses;
+
+  // Recorrentes
+  document.querySelector('input[name="rec-base-mode"][value="coorte"]').checked = true;
+  $('#rec-base').value = state.recorrentes.base;
+  setDistributionInputs('rec', state.recorrentes.dist);
+  setTickets('rec', state.recorrentes.ticket);
   $('#rec-modelo').value = state.recorrentes.modelo;
-  $('#rec-modelo').addEventListener('change', () => { state.recorrentes.modelo = $('#rec-modelo').value; renderAll(); });
+  $('#rec-mig').value = (state.recorrentes.mig * 100).toFixed(4);
+  $('#rec-mig-num').value = (state.recorrentes.mig * 100).toFixed(4);
 
-  const recSlider = $('#rec-migr-slider');
-  const recInput  = $('#rec-migr-input');
-  const syncRecMig = (valPct) => {
-    valPct = clamp(valPct, 0, 100);
-    recSlider.value = String(valPct);
-    recInput.value = String(valPct);
-    state.recorrentes.migracaoPct = valPct / 100;
-    renderAll();
-  };
-  recSlider.addEventListener('input', () => syncRecMig(+recSlider.value));
-  recInput.addEventListener('input', () => syncRecMig(+recInput.value));
+  // Eventuais
+  document.querySelector('input[name="evt-base-mode"][value="coorte"]').checked = true;
+  $('#evt-base').value = state.eventuais.base;
+  setDistributionInputs('evt', state.eventuais.dist);
+  setTickets('evt', state.eventuais.ticket);
+  $('#evt-modelo').value = state.eventuais.modelo;
+  $('#evt-mig').value = (state.eventuais.mig * 100).toFixed(4);
+  $('#evt-mig-num').value = (state.eventuais.mig * 100).toFixed(4);
 
-  // Bind Eventuais inputs
-  bindNumber('#ev-coorte', () => state.eventuais.coorte, v => state.eventuais.coorte = +v, renderAll);
-  bindNumber('#ev-total', () => state.eventuais.total, v => state.eventuais.total = +v, renderAll);
+  // Bindings
+  bindTabNav();
+  bindGlobal();
+  bindSegment('rec', 'recorrentes', defaults.recorrentes);
+  bindSegment('evt', 'eventuais', defaults.eventuais);
 
-  bindNumber('#ev-pro', () => state.eventuais.dist.pro * 100, v => state.eventuais.dist.pro = (+v)/100, renderAll);
-  bindNumber('#ev-neu', () => state.eventuais.dist.neu * 100, v => state.eventuais.dist.neu = (+v)/100, renderAll);
-  bindNumber('#ev-det', () => state.eventuais.dist.det * 100, v => state.eventuais.dist.det = (+v)/100, renderAll);
-
-  bindNumber('#ev-t-pro', () => state.eventuais.ticket24m.pro, v => state.eventuais.ticket24m.pro = +v, renderAll);
-  bindNumber('#ev-t-neu', () => state.eventuais.ticket24m.neu, v => state.eventuais.ticket24m.neu = +v, renderAll);
-  bindNumber('#ev-t-det', () => state.eventuais.ticket24m.det, v => state.eventuais.ticket24m.det = +v, renderAll);
-
-  $('#ev-modelo').value = state.eventuais.modelo;
-  $('#ev-modelo').addEventListener('change', () => { state.eventuais.modelo = $('#ev-modelo').value; renderAll(); });
-
-  const evSlider = $('#ev-migr-slider');
-  const evInput  = $('#ev-migr-input');
-  const syncEvMig = (valPct) => {
-    valPct = clamp(valPct, 0, 100);
-    evSlider.value = String(valPct);
-    evInput.value = String(valPct);
-    state.eventuais.migracaoPct = valPct / 100;
-    renderAll();
-  };
-  evSlider.addEventListener('input', () => syncEvMig(+evSlider.value));
-  evInput.addEventListener('input', () => syncEvMig(+evInput.value));
-
-  // Inicializa sliders em 0%
-  recSlider.value = '0'; recInput.value = '0';
-  evSlider.value  = '0'; evInput.value  = '0';
-
+  // Primeira renderização
   renderAll();
-}
-
-// Renderização
-function renderSegment(prefix, segState) {
-  const baseModel = state.baseModel;
-  const res = simulaSegmento(segState, baseModel);
-
-  // Máximo permitido para a migração (em %)
-  const maxPct = res.maxAlteracao * 100;
-  const hintEl = $(`#${prefix}-max-hint`);
-  hintEl.textContent = `Máximo permitido: ${maxPct.toFixed(2)}%`;
-
-  // Atualiza limites dos sliders/inputs para o máximo atual
-  const slider = $(`#${prefix}-migr-slider`);
-  const input  = $(`#${prefix}-migr-input`);
-  slider.max = String(maxPct);
-  input.max = String(maxPct);
-
-  // KPIs
-  $(`#${prefix}-nps-atual`).textContent = fmtNps(res.npsAtual);
-  $(`#${prefix}-nps-sim`).textContent = fmtNps(res.npsSim);
-  const npsDelta = res.npsSim - res.npsAtual;
-  $(`#${prefix}-nps-delta`).textContent = (npsDelta >= 0 ? '+' : '') + fmtNps(npsDelta);
-
-  $(`#${prefix}-rec-atual`).textContent = fmtBRL.format(res.receitaAtual);
-  $(`#${prefix}-rec-sim`).textContent = fmtBRL.format(res.receitaSim);
-  const deltaEl = $(`#${prefix}-rec-delta`);
-  deltaEl.textContent = (res.delta >= 0 ? '+' : '') + fmtBRL.format(res.delta);
-  deltaEl.classList.toggle('negative', res.delta < 0);
-
-  // Distribuições
-  $(`#${prefix}-dist-pro-atual`).textContent = fmtPct(res.distAtual.pro);
-  $(`#${prefix}-dist-neu-atual`).textContent = fmtPct(res.distAtual.neu);
-  $(`#${prefix}-dist-det-atual`).textContent = fmtPct(res.distAtual.det);
-
-  $(`#${prefix}-dist-pro-sim`).textContent = fmtPct(res.distSim.pro);
-  $(`#${prefix}-dist-neu-sim`).textContent = fmtPct(res.distSim.neu);
-  $(`#${prefix}-dist-det-sim`).textContent = fmtPct(res.distSim.det);
-}
-
-function renderTotal() {
-  const recRes = simulaSegmento(state.recorrentes, state.baseModel);
-  const evRes  = simulaSegmento(state.eventuais, state.baseModel);
-  const tot = consolidaTotal(recRes, evRes);
-
-  $('#tot-rec-atual').textContent = fmtBRL.format(tot.receitaAtual);
-  $('#tot-rec-sim').textContent   = fmtBRL.format(tot.receitaSim);
-
-  const deltaEl = $('#tot-rec-delta');
-  deltaEl.textContent = (tot.delta >= 0 ? '+' : '') + fmtBRL.format(tot.delta);
-  deltaEl.classList.toggle('negative', tot.delta < 0);
-
-  const npsAtual = npsConsolidado(state.recorrentes, state.eventuais, state.baseModel, false);
-  const npsSim   = npsConsolidado(state.recorrentes, state.eventuais, state.baseModel, true);
-  $('#tot-nps-atual').textContent = fmtNps(npsAtual);
-  $('#tot-nps-sim').textContent   = fmtNps(npsSim);
-  const d = npsSim - npsAtual;
-  $('#tot-nps-delta').textContent = (d >= 0 ? '+' : '') + fmtNps(d);
-}
-
-function renderAll() {
-  // Preenche inputs (garante sincronismo caso a normalização altere distribuição)
-  $('#rec-pro').value = (state.recorrentes.dist.pro * 100).toFixed(6);
-  $('#rec-neu').value = (state.recorrentes.dist.neu * 100).toFixed(6);
-  $('#rec-det').value = (state.recorrentes.dist.det * 100).toFixed(6);
-
-  $('#ev-pro').value = (state.eventuais.dist.pro * 100).toFixed(6);
-  $('#ev-neu').value = (state.eventuais.dist.neu * 100).toFixed(6);
-  $('#ev-det').value = (state.eventuais.dist.det * 100).toFixed(6);
-
-  // Renderiza segmentos e total
-  renderSegment('rec', state.recorrentes);
-  renderSegment('ev', state.eventuais);
-  renderTotal();
 }
 
 document.addEventListener('DOMContentLoaded', init);
