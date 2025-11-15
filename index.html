@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Calculadora de NPS + Impacto no Faturamento</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Calculadora de NPS com simulação de impacto no faturamento. Pronta para embed no Notion." />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="header container">
+      <h1>Calculadora de NPS</h1>
+      <p class="subtitle">Insira seus números para calcular o NPS e simular impacto no faturamento.</p>
+    </header>
+
+    <main class="container">
+      <section class="card">
+        <h2>Entradas</h2>
+        <div class="grid">
+          <div class="field">
+            <label for="detratores">Detratores (0–6)</label>
+            <input id="detratores" type="number" min="0" value="0" />
+          </div>
+          <div class="field">
+            <label for="passivos">Passivos (7–8)</label>
+            <input id="passivos" type="number" min="0" value="0" />
+          </div>
+          <div class="field">
+            <label for="promotores">Promotores (9–10)</label>
+            <input id="promotores" type="number" min="0" value="0" />
+          </div>
+          <div class="field">
+            <label for="ticket">Ticket médio (R\$)</label>
+            <input id="ticket" type="number" min="0" step="0.01" value="0" />
+          </div>
+          <div class="field">
+            <label for="clientesAtivos">Clientes ativos</label>
+            <input id="clientesAtivos" type="number" min="0" value="0" />
+          </div>
+          <div class="field">
+            <label for="uplift">Cenário: variação de retenção (%)</label>
+            <input id="uplift" type="number" step="0.1" value="0" />
+            <small>Use para simular impacto de iniciativas ligadas ao NPS (ex.: +2%)</small>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="btnCalcular" class="btn primary">Calcular</button>
+          <button id="btnReset" class="btn">Limpar</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Resultados</h2>
+
+        <div class="kpi-grid">
+          <div class="kpi">
+            <div class="kpi-label">NPS</div>
+            <div class="kpi-value" id="kpiNps">—</div>
+            <div class="kpi-note" id="kpiNpsFaixa">—</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">% Detratores</div>
+            <div class="kpi-value" id="kpiDetrPct">—</div>
+            <div class="kpi-note">0–6</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">% Passivos</div>
+            <div class="kpi-value" id="kpiPassPct">—</div>
+            <div class="kpi-note">7–8</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">% Promotores</div>
+            <div class="kpi-value" id="kpiPromPct">—</div>
+            <div class="kpi-note">9–10</div>
+          </div>
+        </div>
+
+        <div class="bar">
+          <div id="barDetr" class="bar-seg detr" style="width:0%"></div>
+          <div id="barPass" class="bar-seg pass" style="width:0%"></div>
+          <div id="barProm" class="bar-seg prom" style="width:0%"></div>
+        </div>
+
+        <div class="rev-grid">
+          <div class="kpi wide">
+            <div class="kpi-label">Receita estimada mensal atual (R\$)</div>
+            <div class="kpi-value" id="kpiReceita">—</div>
+            <div class="kpi-note">Ticket médio x clientes ativos</div>
+          </div>
+          <div class="kpi wide">
+            <div class="kpi-label">Impacto do cenário de retenção (R\$)</div>
+            <div class="kpi-value" id="kpiImpacto">—</div>
+            <div class="kpi-note" id="kpiImpactoNote">Com base em variação de retenção (%)</div>
+          </div>
+        </div>
+
+        <div class="foot-note">
+          Observação: a métrica de impacto é um cenário simples (what-if). Ajuste a variação de retenção (%) conforme sua realidade.
+        </div>
+
+        <div class="actions">
+          <button id="btnCopiar" class="btn">Copiar resumo</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer container">
+      <small>Pronto para embed no Notion. 100% HTML/CSS/JS estático.</small>
+    </footer>
+  </div>
+
+  <script src="./js/script.js"></script>
+</body>
+</html>
