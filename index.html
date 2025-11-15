@@ -2,115 +2,350 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <title>Calculadora de NPS + Impacto no Faturamento</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Calculadora de NPS com simulação de impacto no faturamento. Pronta para embed no Notion." />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="./css/style.css" />
+  <title>Simulador de Impacto de NPS no Faturamento (24 meses)</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="wrap">
-    <header class="header container">
-      <h1>Calculadora de NPS</h1>
-      <p class="subtitle">Insira seus números para calcular o NPS e simular impacto no faturamento.</p>
-    </header>
+  <header class="app-header">
+    <h1>Simulador de Impacto de NPS no Faturamento (24 meses)</h1>
+    <p class="subtitle">
+      Altere os parâmetros e veja o impacto no NPS e no faturamento de 24 meses, por segmento.
+    </p>
+  </header>
 
-    <main class="container">
-      <section class="card">
-        <h2>Entradas</h2>
-        <div class="grid">
+  <section class="controls-top">
+    <div class="card">
+      <h3>Base de Modelo</h3>
+      <p class="muted">Define qual base é usada nos cálculos (contagem de clientes).</p>
+      <div class="radio-row">
+        <label>
+          <input type="radio" name="baseModel" value="coorte" checked />
+          Coorte (respostas)
+        </label>
+        <label>
+          <input type="radio" name="baseModel" value="real" />
+          Base Real (todos os clientes)
+        </label>
+      </div>
+      <small class="note">
+        Dica: Para reproduzir exatamente os números da planilha, deixe em “Coorte (respostas)”.
+      </small>
+    </div>
+  </section>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="recorrentes">Recorrentes</button>
+    <button class="tab" data-tab="eventuais">Eventuais</button>
+    <button class="tab" data-tab="total">Total</button>
+  </nav>
+
+  <!-- Painel: Recorrentes -->
+  <section class="tab-panel active" id="panel-recorrentes">
+    <div class="grid">
+      <div class="col">
+        <div class="card">
+          <h3>Entradas — Recorrentes</h3>
+          <div class="field two">
+            <label>Coorte (respostas)
+              <input type="number" id="rec-coorte" min="0" step="1" />
+            </label>
+            <label>Base Real (todos)
+              <input type="number" id="rec-total" min="0" step="1" />
+            </label>
+          </div>
+
+          <div class="divider">Distribuição de clientes</div>
+          <div class="field three">
+            <label>Promotores (%)
+              <input type="number" id="rec-pro" step="0.0001" min="0" max="100" />
+            </label>
+            <label>Neutros (%)
+              <input type="number" id="rec-neu" step="0.0001" min="0" max="100" />
+            </label>
+            <label>Detratores (%)
+              <input type="number" id="rec-det" step="0.0001" min="0" max="100" />
+            </label>
+          </div>
+          <small class="note">A soma pode não dar exatamente 100% devido a arredondamentos; normalizamos nos cálculos.</small>
+
+          <div class="divider">Ticket médio por cliente (24 meses)</div>
+          <div class="field three">
+            <label>Promotores (R\$)
+              <input type="number" id="rec-t-pro" step="0.0000001" min="0" />
+            </label>
+            <label>Neutros (R\$)
+              <input type="number" id="rec-t-neu" step="0.0000001" min="0" />
+            </label>
+            <label>Detratores (R\$)
+              <input type="number" id="rec-t-det" step="0.0000001" min="0" />
+            </label>
+          </div>
+
+          <div class="divider">Simulação de conversão</div>
           <div class="field">
-            <label for="detratores">Detratores (0–6)</label>
-            <input id="detratores" type="number" min="0" value="0" />
+            <label>Tipo de Conversão
+              <select id="rec-modelo">
+                <option value="detToPro">Modelo 01 — Detratores → Promotores</option>
+                <option value="neuToPro">Modelo 02 — Neutros → Promotores</option>
+                <option value="detToNeu">Modelo 03 — Detratores → Neutros</option>
+              </select>
+            </label>
           </div>
+
           <div class="field">
-            <label for="passivos">Passivos (7–8)</label>
-            <input id="passivos" type="number" min="0" value="0" />
+            <label class="label-row">
+              Pontos de Alteração (% de clientes que migram)
+              <span id="rec-max-hint" class="hint"></span>
+            </label>
+            <input type="range" id="rec-migr-slider" min="0" max="100" step="0.01" />
+            <div class="inline">
+              <input type="number" id="rec-migr-input" min="0" max="100" step="0.01" />
+              <span class="suffix">%</span>
+            </div>
+            <small class="note">
+              O limite máximo depende do grupo de origem (Detratores ou Neutros).
+            </small>
           </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="card kpis">
+          <h3>KPIs — Recorrentes</h3>
+          <div class="kpi-row">
+            <div class="kpi">
+              <div class="kpi-label">NPS Atual</div>
+              <div class="kpi-value" id="rec-nps-atual">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">NPS Simulado</div>
+              <div class="kpi-value" id="rec-nps-sim">—</div>
+            </div>
+            <div class="kpi small">
+              <div class="kpi-label">Δ NPS (p.p.)</div>
+              <div class="kpi-value" id="rec-nps-delta">—</div>
+            </div>
+          </div>
+
+          <div class="kpi-row">
+            <div class="kpi">
+              <div class="kpi-label">Receita 24m (Atual)</div>
+              <div class="kpi-value" id="rec-rec-atual">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Receita 24m (Simulada)</div>
+              <div class="kpi-value" id="rec-rec-sim">—</div>
+            </div>
+            <div class="kpi small">
+              <div class="kpi-label">Faturamento Adicionado</div>
+              <div class="kpi-value delta" id="rec-rec-delta">—</div>
+            </div>
+          </div>
+
+          <div class="divider">Distribuição resultante</div>
+          <div class="dist-table">
+            <div><strong>Grupo</strong></div>
+            <div><strong>Atual</strong></div>
+            <div><strong>Simulado</strong></div>
+
+            <div>Promotores</div>
+            <div id="rec-dist-pro-atual">—</div>
+            <div id="rec-dist-pro-sim">—</div>
+
+            <div>Neutros</div>
+            <div id="rec-dist-neu-atual">—</div>
+            <div id="rec-dist-neu-sim">—</div>
+
+            <div>Detratores</div>
+            <div id="rec-dist-det-atual">—</div>
+            <div id="rec-dist-det-sim">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Painel: Eventuais -->
+  <section class="tab-panel" id="panel-eventuais">
+    <div class="grid">
+      <div class="col">
+        <div class="card">
+          <h3>Entradas — Eventuais</h3>
+          <div class="field two">
+            <label>Coorte (respostas)
+              <input type="number" id="ev-coorte" min="0" step="1" />
+            </label>
+            <label>Base Real (todos)
+              <input type="number" id="ev-total" min="0" step="1" />
+            </label>
+          </div>
+
+          <div class="divider">Distribuição de clientes</div>
+          <div class="field three">
+            <label>Promotores (%)
+              <input type="number" id="ev-pro" step="0.0001" min="0" max="100" />
+            </label>
+            <label>Neutros (%)
+              <input type="number" id="ev-neu" step="0.0001" min="0" max="100" />
+            </label>
+            <label>Detratores (%)
+              <input type="number" id="ev-det" step="0.0001" min="0" max="100" />
+            </label>
+          </div>
+
+          <div class="divider">Ticket médio por cliente (24 meses)</div>
+          <div class="field three">
+            <label>Promotores (R\$)
+              <input type="number" id="ev-t-pro" step="0.0000001" min="0" />
+            </label>
+            <label>Neutros (R\$)
+              <input type="number" id="ev-t-neu" step="0.0000001" min="0" />
+            </label>
+            <label>Detratores (R\$)
+              <input type="number" id="ev-t-det" step="0.0000001" min="0" />
+            </label>
+          </div>
+
+          <div class="divider">Simulação de conversão</div>
           <div class="field">
-            <label for="promotores">Promotores (9–10)</label>
-            <input id="promotores" type="number" min="0" value="0" />
+            <label>Tipo de Conversão
+              <select id="ev-modelo">
+                <option value="detToPro">Modelo 01 — Detratores → Promotores</option>
+                <option value="neuToPro">Modelo 02 — Neutros → Promotores</option>
+                <option value="detToNeu">Modelo 03 — Detratores → Neutros</option>
+              </select>
+            </label>
           </div>
+
           <div class="field">
-            <label for="ticket">Ticket médio (R\$)</label>
-            <input id="ticket" type="number" min="0" step="0.01" value="0" />
-          </div>
-          <div class="field">
-            <label for="clientesAtivos">Clientes ativos</label>
-            <input id="clientesAtivos" type="number" min="0" value="0" />
-          </div>
-          <div class="field">
-            <label for="uplift">Cenário: variação de retenção (%)</label>
-            <input id="uplift" type="number" step="0.1" value="0" />
-            <small>Use para simular impacto de iniciativas ligadas ao NPS (ex.: +2%)</small>
-          </div>
-        </div>
-        <div class="actions">
-          <button id="btnCalcular" class="btn primary">Calcular</button>
-          <button id="btnReset" class="btn">Limpar</button>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Resultados</h2>
-
-        <div class="kpi-grid">
-          <div class="kpi">
-            <div class="kpi-label">NPS</div>
-            <div class="kpi-value" id="kpiNps">—</div>
-            <div class="kpi-note" id="kpiNpsFaixa">—</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">% Detratores</div>
-            <div class="kpi-value" id="kpiDetrPct">—</div>
-            <div class="kpi-note">0–6</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">% Passivos</div>
-            <div class="kpi-value" id="kpiPassPct">—</div>
-            <div class="kpi-note">7–8</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">% Promotores</div>
-            <div class="kpi-value" id="kpiPromPct">—</div>
-            <div class="kpi-note">9–10</div>
+            <label class="label-row">
+              Pontos de Alteração (% de clientes que migram)
+              <span id="ev-max-hint" class="hint"></span>
+            </label>
+            <input type="range" id="ev-migr-slider" min="0" max="100" step="0.01" />
+            <div class="inline">
+              <input type="number" id="ev-migr-input" min="0" max="100" step="0.01" />
+              <span class="suffix">%</span>
+            </div>
+            <small class="note">
+              O limite máximo depende do grupo de origem (Detratores ou Neutros).
+            </small>
           </div>
         </div>
+      </div>
 
-        <div class="bar">
-          <div id="barDetr" class="bar-seg detr" style="width:0%"></div>
-          <div id="barPass" class="bar-seg pass" style="width:0%"></div>
-          <div id="barProm" class="bar-seg prom" style="width:0%"></div>
-        </div>
-
-        <div class="rev-grid">
-          <div class="kpi wide">
-            <div class="kpi-label">Receita estimada mensal atual (R\$)</div>
-            <div class="kpi-value" id="kpiReceita">—</div>
-            <div class="kpi-note">Ticket médio x clientes ativos</div>
+      <div class="col">
+        <div class="card kpis">
+          <h3>KPIs — Eventuais</h3>
+          <div class="kpi-row">
+            <div class="kpi">
+              <div class="kpi-label">NPS Atual</div>
+              <div class="kpi-value" id="ev-nps-atual">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">NPS Simulado</div>
+              <div class="kpi-value" id="ev-nps-sim">—</div>
+            </div>
+            <div class="kpi small">
+              <div class="kpi-label">Δ NPS (p.p.)</div>
+              <div class="kpi-value" id="ev-nps-delta">—</div>
+            </div>
           </div>
-          <div class="kpi wide">
-            <div class="kpi-label">Impacto do cenário de retenção (R\$)</div>
-            <div class="kpi-value" id="kpiImpacto">—</div>
-            <div class="kpi-note" id="kpiImpactoNote">Com base em variação de retenção (%)</div>
+
+          <div class="kpi-row">
+            <div class="kpi">
+              <div class="kpi-label">Receita 24m (Atual)</div>
+              <div class="kpi-value" id="ev-rec-atual">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Receita 24m (Simulada)</div>
+              <div class="kpi-value" id="ev-rec-sim">—</div>
+            </div>
+            <div class="kpi small">
+              <div class="kpi-label">Faturamento Adicionado</div>
+              <div class="kpi-value delta" id="ev-rec-delta">—</div>
+            </div>
+          </div>
+
+          <div class="divider">Distribuição resultante</div>
+          <div class="dist-table">
+            <div><strong>Grupo</strong></div>
+            <div><strong>Atual</strong></div>
+            <div><strong>Simulado</strong></div>
+
+            <div>Promotores</div>
+            <div id="ev-dist-pro-atual">—</div>
+            <div id="ev-dist-pro-sim">—</div>
+
+            <div>Neutros</div>
+            <div id="ev-dist-neu-atual">—</div>
+            <div id="ev-dist-neu-sim">—</div>
+
+            <div>Detratores</div>
+            <div id="ev-dist-det-atual">—</div>
+            <div id="ev-dist-det-sim">—</div>
           </div>
         </div>
+      </div>
+    </div>
+  </section>
 
-        <div class="foot-note">
-          Observação: a métrica de impacto é um cenário simples (what-if). Ajuste a variação de retenção (%) conforme sua realidade.
+  <!-- Painel: Total -->
+  <section class="tab-panel" id="panel-total">
+    <div class="grid single">
+      <div class="col">
+        <div class="card total">
+          <h3>Total consolidado (Recorrentes + Eventuais)</h3>
+          <div class="kpi-row">
+            <div class="kpi">
+              <div class="kpi-label">Receita 24m (Atual)</div>
+              <div class="kpi-value" id="tot-rec-atual">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Receita 24m (Simulada)</div>
+              <div class="kpi-value" id="tot-rec-sim">—</div>
+            </div>
+            <div class="kpi small">
+              <div class="kpi-label">Faturamento Adicionado</div>
+              <div class="kpi-value delta" id="tot-rec-delta">—</div>
+            </div>
+          </div>
+
+          <div class="divider">NPS consolidado (aproximado)</div>
+          <div class="note">
+            O NPS consolidado é estimado ponderando as distribuições por base utilizada (Coorte/Base Real).
+          </div>
+          <div class="kpi-row">
+            <div class="kpi">
+              <div class="kpi-label">NPS Atual</div>
+              <div class="kpi-value" id="tot-nps-atual">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">NPS Simulado</div>
+              <div class="kpi-value" id="tot-nps-sim">—</div>
+            </div>
+            <div class="kpi small">
+              <div class="kpi-label">Δ NPS (p.p.)</div>
+              <div class="kpi-value" id="tot-nps-delta">—</div>
+            </div>
+          </div>
+
+          <div class="divider">Observações</div>
+          <ul class="muted">
+            <li>Tickets representam valor por cliente ao longo de 24 meses (não é mensal).</li>
+            <li>“Pontos de Alteração” é a fração de clientes que migram do grupo de origem.</li>
+            <li>O limite máximo é a proporção atual do grupo de origem.</li>
+          </ul>
         </div>
+      </div>
+    </div>
+  </section>
 
-        <div class="actions">
-          <button id="btnCopiar" class="btn">Copiar resumo</button>
-        </div>
-      </section>
-    </main>
+  <footer class="app-footer">
+    <span>Feito para simular impacto de NPS no faturamento em 24 meses.</span>
+  </footer>
 
-    <footer class="footer container">
-      <small>Pronto para embed no Notion. 100% HTML/CSS/JS estático.</small>
-    </footer>
-  </div>
-
-  <script src="./js/script.js"></script>
+  <script src="script.js"></script>
 </body>
 </html>
